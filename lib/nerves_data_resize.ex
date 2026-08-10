@@ -1,4 +1,4 @@
-defmodule FwupDataResize do
+defmodule NervesDataResize do
   @moduledoc """
   First-boot expansion of the F2FS application data partition.
 
@@ -26,7 +26,7 @@ defmodule FwupDataResize do
 
   Either at app-config time:
 
-      config :fwup_data_resize, :config,
+      config :nerves_data_resize, :config,
         partition: "/dev/mmcblk0p62p3",
         mount_point: "/root",
         mount_opts: "nodev",
@@ -36,7 +36,7 @@ defmodule FwupDataResize do
 
   …or pass the same keys directly to `run/1`:
 
-      FwupDataResize.run(partition: "/dev/mmcblk0p62p3")
+      NervesDataResize.run(partition: "/dev/mmcblk0p62p3")
 
   Empty config (no `:partition` key) disables the resizer.
   """
@@ -58,7 +58,7 @@ defmodule FwupDataResize do
           | {:ok, %{before: non_neg_integer(), after: non_neg_integer()}}
           | {:error, term()}
   def run(opts \\ []) do
-    config = opts ++ (Application.get_env(:fwup_data_resize, :config) || [])
+    config = opts ++ (Application.get_env(:nerves_data_resize, :config) || [])
 
     partition = Keyword.get(config, :partition)
     mount_point = Keyword.get(config, :mount_point, "/root")
@@ -77,23 +77,23 @@ defmodule FwupDataResize do
          {:ok, part_bytes} <- partition_bytes(partition),
          true <- part_bytes / max(fs_bytes, 1) >= threshold || :already_grown do
       Logger.info(
-        "[fwup_data_resize] resizing #{partition}: FS=#{mb(fs_bytes)} MB → partition=#{mb(part_bytes)} MB"
+        "[nerves_data_resize] resizing #{partition}: FS=#{mb(fs_bytes)} MB → partition=#{mb(part_bytes)} MB"
       )
 
       with :ok <- unmount(mount_point),
            :ok <- resize_f2fs(partition),
            :ok <- mount_f2fs(partition, mount_point, mount_opts),
            {:ok, after_bytes} <- fs_bytes(mount_point) do
-        Logger.info("[fwup_data_resize] resize ok: FS now #{mb(after_bytes)} MB")
+        Logger.info("[nerves_data_resize] resize ok: FS now #{mb(after_bytes)} MB")
         {:ok, %{before: fs_bytes, after: after_bytes}}
       else
         {:error, reason} = err ->
-          Logger.error("[fwup_data_resize] resize failed at step: #{inspect(reason)}; attempting remount")
+          Logger.error("[nerves_data_resize] resize failed at step: #{inspect(reason)}; attempting remount")
           _ = mount_f2fs(partition, mount_point, mount_opts)
           err
 
         other ->
-          Logger.error("[fwup_data_resize] resize failed: #{inspect(other)}")
+          Logger.error("[nerves_data_resize] resize failed: #{inspect(other)}")
           _ = mount_f2fs(partition, mount_point, mount_opts)
           {:error, other}
       end
@@ -102,7 +102,7 @@ defmodule FwupDataResize do
         :already_grown
 
       {:error, _} = err ->
-        Logger.warning("[fwup_data_resize] storage resizer skipping: #{inspect(err)}")
+        Logger.warning("[nerves_data_resize] storage resizer skipping: #{inspect(err)}")
         err
     end
   end

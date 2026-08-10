@@ -1,4 +1,4 @@
-# fwup_data_resize
+# nerves_data_resize
 
 > ### ⚠️ Very early work — built for a workshop, not for production
 >
@@ -36,7 +36,7 @@ Configure once:
 
 ```elixir
 # config/target.exs
-config :fwup_data_resize, :config,
+config :nerves_data_resize, :config,
   partition: "/dev/mmcblk0p62p3",
   mount_point: "/root",
   mount_opts: "nodev",
@@ -50,7 +50,7 @@ defmodule MyApp.Application do
   use Application
 
   def start(_type, _args) do
-    _ = FwupDataResize.run()
+    _ = NervesDataResize.run()
     Supervisor.start_link(children(), strategy: :one_for_one)
   end
 end
@@ -59,7 +59,7 @@ end
 Or skip the config entirely and pass keys directly:
 
 ```elixir
-FwupDataResize.run(partition: "/dev/mmcblk0p1", mount_point: "/data")
+NervesDataResize.run(partition: "/dev/mmcblk0p1", mount_point: "/data")
 ```
 
 ## What it returns
