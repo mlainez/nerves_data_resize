@@ -1,5 +1,18 @@
 # fwup_data_resize
 
+> ### ⚠️ Very early work — built for a workshop, not for production
+>
+> This package was written for the **Goatmire Elixir workshop** on running
+> Nerves on Fairphone 3 hardware. It exists for tinkering and teaching.
+>
+> It is **not an actively maintained project** (yet). There are no
+> stability guarantees, APIs will change without notice, and parts of it
+> are wired-but-unproven. Treat it as a starting point to hack on, not as
+> a dependency to build a product on.
+>
+> See [`nerves_ai`](https://github.com/mlainez/nerves_ai) for the full
+> stack and the workshop context.
+
 First-boot F2FS data-partition grow for devices flashed via
 [fwup](https://github.com/fwup-home/fwup) (Nerves, Buildroot-fwup,
 etc.).

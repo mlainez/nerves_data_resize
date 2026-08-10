@@ -24,8 +24,8 @@ defmodule FwupDataResize.MixProject do
     [
       name: :fwup_data_resize,
       licenses: ["Apache-2.0"],
-      files: ~w(lib mix.exs README.md),
-      links: %{"GitHub" => "https://github.com/marclainez/fwup_data_resize"}
+      files: ~w(lib mix.exs README.md LICENSE),
+      links: %{"GitHub" => "https://github.com/mlainez/fwup_data_resize"}
     ]
   end
 end
