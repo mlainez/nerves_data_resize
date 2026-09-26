@@ -7,7 +7,7 @@ defmodule NervesDataResize.MixProject do
     [
       app: :nerves_data_resize,
       version: @version,
-      elixir: "~> 1.15",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: [],
       name: "NervesDataResize",
