@@ -5,10 +5,7 @@
 > This package was written for the **Goatmire Elixir workshop** on running
 > Nerves on Fairphone 3 hardware. It exists for tinkering and teaching.
 >
-> It is **not an actively maintained project** (yet). There are no
-> stability guarantees, APIs will change without notice, and parts of it
-> are wired-but-unproven. Treat it as a starting point to hack on, not as
-> a dependency to build a product on.
+> There are no stability guarantees and APIs will change without notice.
 >
 > See [`nerves_ai`](https://github.com/mlainez/nerves_ai) for the full
 > stack and the workshop context.
@@ -19,16 +16,19 @@ etc.).
 
 ## The problem
 
-`fwup` ships small initial filesystems inside large raw partitions:
-mkfs.f2fs writes a 256 MB FS into a 51 GB partition, and the rest
-of the disk is wasted until you grow the FS. The fwup config
-already expands the partition entry — but the F2FS *inside* stays
-at its mkfs size.
+Some firmware images ship a small, pre-built F2FS filesystem inside a
+much larger data partition. The Fairphone 3 system, for example, writes
+a 256 MB filesystem into a 51 GB partition. fwup grows the partition
+entry (`expand = true`), but the filesystem inside stays at its original
+size and the rest of the disk is wasted.
 
-This library fills the gap. At app boot, compare FS size vs
-partition size; if the FS is materially smaller, unmount, run
-`resize.f2fs`, remount. Idempotent — once the FS fills the
-partition, subsequent boots short-circuit.
+At boot this library compares the filesystem size with the partition
+size. If the filesystem is materially smaller, it unmounts it, runs
+`resize.f2fs`, and remounts it. Once the filesystem fills the partition,
+later boots return `:already_grown` immediately.
+
+Official Nerves systems format the whole application partition on first
+boot, so they don't need this.
 
 ## Usage
 
@@ -43,7 +43,8 @@ config :nerves_data_resize, :config,
   threshold: 1.1   # skip if partition ≤ FS × 1.1
 ```
 
-Then call once at app start:
+Then call once at app start, before anything writes to the partition
+(`nerves_ai` does this for you):
 
 ```elixir
 defmodule MyApp.Application do
@@ -70,15 +71,18 @@ NervesDataResize.run(partition: "/dev/mmcblk0p1", mount_point: "/data")
 - `{:error, reason}` — failed (logged but not raised — the BEAM
   keeps running)
 
-## Requirements on the device
+## Requirements
 
-- `df` for FS size reading (POSIX flags, busybox-compatible)
-- `blockdev` (or `/sys/class/block/<dev>/size`) for partition size
-- `umount` / `mount` (POSIX)
-- `resize.f2fs` (typically in the F2FS userspace tools)
+The firmware image must provide `df`, `mount`, `umount` and `resize.f2fs`
+(from f2fs-tools) on the `PATH`. If any of them is missing, `run/1`
+returns `{:error, {:missing_tools, names}}` before touching the
+partition. The partition size is read from `/sys/class/block/<dev>/size`,
+falling back to `blockdev --getsize64` for device-mapper partitions.
 
-All are present in default Nerves Buildroot rootfs. For non-Nerves
-fwup deployments verify these are in your image.
+## Toolchain
+
+Built and tested with Erlang/OTP 29.1.1 and Elixir 1.20.4, matching the
+official Nerves systems (see `.tool-versions`).
 
 ## License
 
