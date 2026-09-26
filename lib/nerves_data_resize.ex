@@ -2,10 +2,11 @@ defmodule NervesDataResize do
   @moduledoc """
   First-boot expansion of the F2FS application data partition.
 
-  On Nerves images that ship a small (256 MB) F2FS into a much
-  bigger raw partition, `df` reports the small size and the rest of
-  the disk is wasted. The fwup config grows the *partition* via
-  `expand = true` but the F2FS inside stays at its mkfs size.
+  Some firmware images (such as the Fairphone 3 system) ship a small,
+  pre-built F2FS inside a much bigger data partition. fwup grows the
+  *partition* via `expand = true`, but the F2FS inside stays at its
+  original size, so `df` reports the small size and the rest of the
+  disk is wasted.
 
   This module compares filesystem size vs partition size at app
   start. If the FS is materially smaller, it:
@@ -16,8 +17,7 @@ defmodule NervesDataResize do
 
   All while the BEAM keeps running (it lives on `/srv/erlang` on
   squashfs, not on the target partition). Anything that wrote to
-  the target before this ran would have done so on the 256 MB FS;
-  the resize preserves data.
+  the target before this ran stays in place; the resize preserves data.
 
   The resize is idempotent — once the FS fills the partition,
   subsequent boots short-circuit.
@@ -39,6 +39,15 @@ defmodule NervesDataResize do
       NervesDataResize.run(partition: "/dev/mmcblk0p62p3")
 
   Empty config (no `:partition` key) disables the resizer.
+
+  ## Requirements
+
+  The firmware image must provide `df`, `mount`, `umount` and
+  `resize.f2fs` (from f2fs-tools) on the `PATH`. If any is missing,
+  `run/1` returns `{:error, {:missing_tools, names}}` before touching
+  the partition. Official Nerves systems format the whole application
+  partition at first boot, so this is only needed on images that ship a
+  pre-built, smaller F2FS filesystem (such as the Fairphone 3 system).
   """
 
   require Logger
@@ -52,7 +61,7 @@ defmodule NervesDataResize do
     * `{:ok, %{before: bytes, after: bytes}}` — grew the FS
     * `{:error, reason}` — failed (logged but not raised)
   """
-  @spec run() ::
+  @spec run(keyword()) ::
           :already_grown
           | :disabled
           | {:ok, %{before: non_neg_integer(), after: non_neg_integer()}}
@@ -73,7 +82,8 @@ defmodule NervesDataResize do
   end
 
   defp do_resize(partition, mount_point, mount_opts, threshold) do
-    with {:ok, fs_bytes} <- fs_bytes(mount_point),
+    with :ok <- tools_present(),
+         {:ok, fs_bytes} <- fs_bytes(mount_point),
          {:ok, part_bytes} <- partition_bytes(partition),
          true <- part_bytes / max(fs_bytes, 1) >= threshold || :already_grown do
       Logger.info(
@@ -91,11 +101,6 @@ defmodule NervesDataResize do
           Logger.error("[nerves_data_resize] resize failed at step: #{inspect(reason)}; attempting remount")
           _ = mount_f2fs(partition, mount_point, mount_opts)
           err
-
-        other ->
-          Logger.error("[nerves_data_resize] resize failed: #{inspect(other)}")
-          _ = mount_f2fs(partition, mount_point, mount_opts)
-          {:error, other}
       end
     else
       :already_grown ->
@@ -104,6 +109,16 @@ defmodule NervesDataResize do
       {:error, _} = err ->
         Logger.warning("[nerves_data_resize] storage resizer skipping: #{inspect(err)}")
         err
+    end
+  end
+
+  # Check every external tool up front: failing after the unmount would
+  # leave the data partition unmounted until the fallback remount.
+  @tools ~w(df umount mount resize.f2fs)
+  defp tools_present do
+    case Enum.reject(@tools, &System.find_executable/1) do
+      [] -> :ok
+      missing -> {:error, {:missing_tools, missing}}
     end
   end
 
