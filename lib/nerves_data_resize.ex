@@ -3,17 +3,16 @@ defmodule NervesDataResize do
   First-boot expansion of the F2FS application data partition.
 
   Some firmware images (such as the Fairphone 3 system) ship a small,
-  pre-built F2FS inside a much bigger data partition. fwup grows the
-  *partition* via `expand = true`, but the F2FS inside stays at its
-  original size, so `df` reports the small size and the rest of the
-  disk is wasted.
+  pre-built F2FS inside a much bigger data partition, so `df` reports
+  the small size and the rest of the disk is wasted.
 
   This module compares filesystem size vs partition size at app
   start. If the FS is materially smaller, it:
 
     1. Unmounts the target.
-    2. Runs `resize.f2fs` to grow the FS to the partition size.
-    3. Remounts the target.
+    2. Optionally grows the partition itself (see `:grow_partition`).
+    3. Runs `resize.f2fs` to grow the FS to the partition size.
+    4. Remounts the target.
 
   All while the BEAM keeps running (it lives on `/srv/erlang` on
   squashfs, not on the target partition). Anything that wrote to
@@ -34,6 +33,21 @@ defmodule NervesDataResize do
         # Avoids no-op resizes for negligible differences.
         threshold: 1.1
 
+  An image flashed raw (not installed by fwup on the device) keeps the
+  partition size it was built with. `:grow_partition` grows a
+  device-mapper partition to the end of its disk: an fwup task on the
+  device rewrites the partition table (typically an `mbr_write` of an
+  `expand = true` partition), then the mapping is reloaded:
+
+      config :nerves_data_resize, :config,
+        partition: "/dev/mmcblk0p62p3",
+        mount_point: "/root",
+        grow_partition: [
+          disk: "/dev/mmcblk0p62",
+          ops_fw: "/usr/share/fwup/ops.fw",
+          task: "grow-app"
+        ]
+
   …or pass the same keys directly to `run/1`:
 
       NervesDataResize.run(partition: "/dev/mmcblk0p62p3")
@@ -43,7 +57,8 @@ defmodule NervesDataResize do
   ## Requirements
 
   The firmware image must provide `df`, `mount`, `umount` and
-  `resize.f2fs` (from f2fs-tools) on the `PATH`. If any is missing,
+  `resize.f2fs` (from f2fs-tools) on the `PATH`, plus `fwup` and
+  `dmsetup` when `:grow_partition` is set. If any is missing,
   `run/1` returns `{:error, {:missing_tools, names}}` before touching
   the partition. Official Nerves systems format the whole application
   partition at first boot, so this is only needed on images that ship a
@@ -73,24 +88,28 @@ defmodule NervesDataResize do
     mount_point = Keyword.get(config, :mount_point, "/root")
     mount_opts = Keyword.get(config, :mount_opts, "nodev")
     threshold = Keyword.get(config, :threshold, 1.1)
+    grow = Keyword.get(config, :grow_partition)
 
     if partition == nil do
       :disabled
     else
-      do_resize(partition, mount_point, mount_opts, threshold)
+      do_resize(partition, mount_point, mount_opts, threshold, grow)
     end
   end
 
-  defp do_resize(partition, mount_point, mount_opts, threshold) do
-    with :ok <- tools_present(),
+  defp do_resize(partition, mount_point, mount_opts, threshold, grow) do
+    with :ok <- tools_present(grow),
          {:ok, fs_bytes} <- fs_bytes(mount_point),
          {:ok, part_bytes} <- partition_bytes(partition),
-         true <- part_bytes / max(fs_bytes, 1) >= threshold || :already_grown do
+         {:ok, dm_grow} <- plan_partition_grow(partition, grow),
+         target_bytes = if(dm_grow, do: dm_grow.new_sectors * 512, else: part_bytes),
+         true <- target_bytes / max(fs_bytes, 1) >= threshold || :already_grown do
       Logger.info(
-        "[nerves_data_resize] resizing #{partition}: FS=#{mb(fs_bytes)} MB → partition=#{mb(part_bytes)} MB"
+        "[nerves_data_resize] resizing #{partition}: FS=#{mb(fs_bytes)} MB → partition=#{mb(target_bytes)} MB"
       )
 
       with :ok <- unmount(mount_point),
+           :ok <- grow_partition(dm_grow, grow),
            :ok <- resize_f2fs(partition),
            :ok <- mount_f2fs(partition, mount_point, mount_opts),
            {:ok, after_bytes} <- fs_bytes(mount_point) do
@@ -98,7 +117,10 @@ defmodule NervesDataResize do
         {:ok, %{before: fs_bytes, after: after_bytes}}
       else
         {:error, reason} = err ->
-          Logger.error("[nerves_data_resize] resize failed at step: #{inspect(reason)}; attempting remount")
+          Logger.error(
+            "[nerves_data_resize] resize failed at step: #{inspect(reason)}; attempting remount"
+          )
+
           _ = mount_f2fs(partition, mount_point, mount_opts)
           err
       end
@@ -112,11 +134,99 @@ defmodule NervesDataResize do
     end
   end
 
+  # With :grow_partition, return the new device-mapper table when the
+  # partition ends before its disk does (nil when it already reaches it).
+  defp plan_partition_grow(_partition, nil), do: {:ok, nil}
+
+  defp plan_partition_grow(partition, grow) do
+    name = Path.basename(partition)
+
+    with {:ok, disk_sectors} <- sysfs_sectors(Keyword.fetch!(grow, :disk)),
+         {out, 0} <- System.cmd("dmsetup", ["table", name], stderr_to_stdout: true),
+         {:ok, table} <- parse_dm_table(out) do
+      {:ok, grow_plan(name, table, disk_sectors)}
+    else
+      {out, code} when is_binary(out) -> {:error, {:dmsetup_table_failed, code, out}}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc false
+  # "0 <sectors> linear <major:minor> <start>" -> map. Only a single
+  # linear target (a partition mapped by kpartx) is supported.
+  @spec parse_dm_table(String.t()) :: {:ok, map()} | {:error, term()}
+  def parse_dm_table(out) do
+    case String.split(String.trim(out)) do
+      ["0", sectors, "linear", device, start] ->
+        {:ok,
+         %{sectors: String.to_integer(sectors), device: device, start: String.to_integer(start)}}
+
+      _ ->
+        {:error, {:unsupported_dm_table, out}}
+    end
+  end
+
+  @doc false
+  # Growing by less than 1 MiB is not worth an unmount.
+  @spec grow_plan(String.t(), map(), non_neg_integer()) :: map() | nil
+  def grow_plan(name, %{sectors: sectors, device: device, start: start}, disk_sectors) do
+    new_sectors = disk_sectors - start
+
+    if new_sectors - sectors >= 2048 do
+      %{name: name, device: device, start: start, new_sectors: new_sectors}
+    end
+  end
+
+  defp grow_partition(nil, _grow), do: :ok
+
+  defp grow_partition(plan, grow) do
+    table = "0 #{plan.new_sectors} linear #{plan.device} #{plan.start}"
+
+    with :ok <-
+           cmd("fwup", [
+             "-a",
+             "-d",
+             Keyword.fetch!(grow, :disk),
+             "-t",
+             Keyword.fetch!(grow, :task),
+             "-i",
+             Keyword.fetch!(grow, :ops_fw)
+           ]),
+         :ok <- cmd("dmsetup", ["suspend", plan.name]),
+         :ok <- cmd("dmsetup", ["reload", plan.name, "--table", table]),
+         :ok <- cmd("dmsetup", ["resume", plan.name]) do
+      Logger.info(
+        "[nerves_data_resize] partition #{plan.name} grown to #{mb(plan.new_sectors * 512)} MB"
+      )
+
+      :ok
+    end
+  end
+
+  defp cmd(program, args) do
+    case System.cmd(program, args, stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {out, code} -> {:error, {String.to_atom(program <> "_failed"), args, code, out}}
+    end
+  end
+
+  defp sysfs_sectors(device) do
+    path = "/sys/class/block/" <> Path.basename(device) <> "/size"
+
+    case File.read(path) do
+      {:ok, s} -> {:ok, s |> String.trim() |> String.to_integer()}
+      {:error, reason} -> {:error, {:no_disk_size, device, reason}}
+    end
+  end
+
   # Check every external tool up front: failing after the unmount would
   # leave the data partition unmounted until the fallback remount.
   @tools ~w(df umount mount resize.f2fs)
-  defp tools_present do
-    case Enum.reject(@tools, &System.find_executable/1) do
+  @grow_tools ~w(fwup dmsetup)
+  defp tools_present(grow) do
+    tools = if grow, do: @tools ++ @grow_tools, else: @tools
+
+    case Enum.reject(tools, &System.find_executable/1) do
       [] -> :ok
       missing -> {:error, {:missing_tools, missing}}
     end

@@ -18,14 +18,22 @@ etc.).
 
 Some firmware images ship a small, pre-built F2FS filesystem inside a
 much larger data partition. The Fairphone 3 system, for example, writes
-a 256 MB filesystem into a 51 GB partition. fwup grows the partition
-entry (`expand = true`), but the filesystem inside stays at its original
-size and the rest of the disk is wasted.
+a 256 MB filesystem into a 51 GB partition. When fwup installs it on the
+device, it grows the partition entry (`expand = true`), but the
+filesystem inside stays at its original size. When the image is flashed
+raw (with `fastboot`, `dd`, ...), even the partition keeps its build-time
+size.
 
 At boot this library compares the filesystem size with the partition
-size. If the filesystem is materially smaller, it unmounts it, runs
+size. If the filesystem is materially smaller, it unmounts it,
+optionally grows the partition first (`:grow_partition`, below), runs
 `resize.f2fs`, and remounts it. Once the filesystem fills the partition,
 later boots return `:already_grown` immediately.
+
+Nothing may hold the partition open when this runs. With IEx shell
+history enabled (`-kernel shell_history enabled`), the Erlang kernel
+keeps the history file open on the data partition, and the unmount
+fails.
 
 Official Nerves systems format the whole application partition on first
 boot, so they don't need this.
@@ -57,6 +65,22 @@ defmodule MyApp.Application do
 end
 ```
 
+For a device-mapper partition flashed raw, add `:grow_partition`. An
+fwup task in the firmware rewrites the partition table (an `mbr_write`
+of an `expand = true` partition), then the mapping is reloaded with
+`dmsetup`:
+
+```elixir
+config :nerves_data_resize, :config,
+  partition: "/dev/mmcblk0p62p3",
+  mount_point: "/root",
+  grow_partition: [
+    disk: "/dev/mmcblk0p62",
+    ops_fw: "/usr/share/fwup/ops.fw",
+    task: "grow-app"
+  ]
+```
+
 Or skip the config entirely and pass keys directly:
 
 ```elixir
@@ -74,7 +98,8 @@ NervesDataResize.run(partition: "/dev/mmcblk0p1", mount_point: "/data")
 ## Requirements
 
 The firmware image must provide `df`, `mount`, `umount` and `resize.f2fs`
-(from f2fs-tools) on the `PATH`. If any of them is missing, `run/1`
+(from f2fs-tools) on the `PATH`, plus `fwup` and `dmsetup` when
+`:grow_partition` is set. If any of them is missing, `run/1`
 returns `{:error, {:missing_tools, names}}` before touching the
 partition. The partition size is read from `/sys/class/block/<dev>/size`,
 falling back to `blockdev --getsize64` for device-mapper partitions.
