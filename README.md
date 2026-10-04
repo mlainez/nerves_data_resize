@@ -48,6 +48,7 @@ than `/` works. With no configuration at all, `run/1` returns `:disabled`.
 | `:filesystem`     | Type override: `:ext4`, `"f2fs"`, or a `NervesDataResize.Filesystem` module. |
 | `:mount_opts`     | Options for remounting an offline filesystem (default: those in use). |
 | `:threshold`      | Grow when `device / filesystem >= threshold` (default `1.1`).      |
+| `:min_grow`       | ...and the device is this many bytes larger (default 64 MiB).      |
 | `:grow_partition` | Device-mapper partition growth, see below.                         |
 | `:runner`         | A `NervesDataResize.System` implementation, for tests.             |
 | `:enabled`        | `false` disables the library.                                      |
