@@ -1,7 +1,7 @@
 # nerves_data_resize
 
 Grows a mounted filesystem to fill the block device behind it. Works for
-ext4, f2fs, btrfs and xfs, has no dependencies, and shells out to the
+ext4 and f2fs, has no dependencies, and shells out to the
 standard resize tools instead of reimplementing anything.
 
 ## When you need it
@@ -62,8 +62,6 @@ bytes}}`, or `{:error, reason}`. Errors are logged and never raised. See
 | Filesystem | Tool needed                   | While growing             |
 |------------|-------------------------------|---------------------------|
 | ext2/3/4   | `resize2fs`                   | mounted (online)          |
-| btrfs      | `btrfs filesystem resize max` | mounted (online)          |
-| xfs        | `xfs_growfs`                  | mounted (online)          |
 | f2fs       | `resize.f2fs`                 | unmounted, then remounted |
 
 `df`, plus `mount` and `umount` for f2fs, must also be on the `PATH`. A missing
@@ -118,13 +116,13 @@ failures; the suite uses it for every strategy and failure path:
 mix test
 ```
 
-The loopback suite grows real ext4, f2fs, btrfs and xfs filesystems on loop
+The loopback suite grows real ext4 and f2fs filesystems on loop
 devices. It needs root, loop devices and the filesystem tools, so it is
 excluded by default. Run it in a throwaway privileged container, for example:
 
 ```
 docker run --rm --privileged -v "$PWD":/src:ro elixir:1.18-otp-27 bash -c '
-  apt-get update -qq && apt-get install -y -qq e2fsprogs f2fs-tools btrfs-progs xfsprogs util-linux
+  apt-get update -qq && apt-get install -y -qq e2fsprogs f2fs-tools util-linux
   for i in $(seq 0 31); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
   cp -r /src /work && cd /work && MIX_ENV=test mix test --only loopback'
 ```

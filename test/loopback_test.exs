@@ -15,9 +15,7 @@ defmodule NervesDataResize.LoopbackTest do
   # {type, mkfs command, size when formatted (MB), size of the device (MB)}
   @cases [
     {"ext4", ["mkfs.ext4", "-q"], 64, 256},
-    {"f2fs", ["mkfs.f2fs", "-q"], 256, 1024},
-    {"btrfs", ["mkfs.btrfs", "-q"], 128, 512},
-    {"xfs", ["mkfs.xfs", "-q"], 300, 1024}
+    {"f2fs", ["mkfs.f2fs", "-q"], 256, 1024}
   ]
 
   for {type, mkfs, small, large} <- @cases do

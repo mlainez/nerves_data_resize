@@ -13,7 +13,7 @@ defmodule NervesDataResize.MixProject do
       deps: [],
       name: "NervesDataResize",
       description:
-        "Grows a mounted ext4, f2fs, btrfs or xfs filesystem to fill its partition. " <>
+        "Grows a mounted ext4 or f2fs filesystem to fill its partition. " <>
           "Idempotent, with the standard resize tools and no extra dependencies.",
       package: package(),
       docs: [main: "readme", extras: ["README.md", "CHANGELOG.md"]]

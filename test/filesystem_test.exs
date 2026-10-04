@@ -2,7 +2,7 @@ defmodule NervesDataResize.FilesystemTest do
   use ExUnit.Case, async: true
 
   alias NervesDataResize.Filesystem
-  alias NervesDataResize.Filesystem.{Btrfs, Ext4, F2fs, Xfs}
+  alias NervesDataResize.Filesystem.{Ext4, F2fs}
   alias NervesDataResize.Mounts
 
   describe "strategies" do
@@ -20,24 +20,8 @@ defmodule NervesDataResize.FilesystemTest do
       assert F2fs.resize_cmds("/dev/sda1", "/data") == [{"resize.f2fs", ["/dev/sda1"]}]
     end
 
-    test "btrfs grows online by mount point" do
-      assert Btrfs.types() == ["btrfs"]
-      assert Btrfs.tools() == ["btrfs"]
-      refute Btrfs.offline?()
-
-      assert Btrfs.resize_cmds("/dev/sda1", "/data") ==
-               [{"btrfs", ["filesystem", "resize", "max", "/data"]}]
-    end
-
-    test "xfs grows online by mount point" do
-      assert Xfs.types() == ["xfs"]
-      assert Xfs.tools() == ["xfs_growfs"]
-      refute Xfs.offline?()
-      assert Xfs.resize_cmds("/dev/sda1", "/data") == [{"xfs_growfs", ["/data"]}]
-    end
-
     test "all strategies read the size with POSIX df" do
-      for mod <- [Ext4, F2fs, Btrfs, Xfs] do
+      for mod <- [Ext4, F2fs] do
         assert mod.size_cmd("/data") == {"df", ["-P", "-k", "/data"]}
       end
     end
@@ -63,13 +47,11 @@ defmodule NervesDataResize.FilesystemTest do
       assert Filesystem.for_type("ext3") == {:ok, Ext4}
       assert Filesystem.for_type("ext2") == {:ok, Ext4}
       assert Filesystem.for_type("f2fs") == {:ok, F2fs}
-      assert Filesystem.for_type("btrfs") == {:ok, Btrfs}
-      assert Filesystem.for_type("xfs") == {:ok, Xfs}
     end
 
     test "accepts atoms and strategy modules" do
       assert Filesystem.for_type(:f2fs) == {:ok, F2fs}
-      assert Filesystem.for_type(Xfs) == {:ok, Xfs}
+      assert Filesystem.for_type(Ext4) == {:ok, Ext4}
     end
 
     test "rejects unsupported types" do
@@ -94,7 +76,7 @@ defmodule NervesDataResize.FilesystemTest do
     end
 
     test "find/2 returns the last mount at a path" do
-      entries = Mounts.parse("/dev/a /m ext4 rw 0 0\n/dev/b /m xfs rw 0 0\n")
+      entries = Mounts.parse("/dev/a /m ext4 rw 0 0\n/dev/b /m f2fs rw 0 0\n")
       assert %{device: "/dev/b"} = Mounts.find(entries, "/m")
       assert Mounts.find(entries, "/other") == nil
     end

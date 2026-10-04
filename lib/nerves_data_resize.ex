@@ -11,8 +11,6 @@ defmodule NervesDataResize do
   | Filesystem | Tool                          | While growing             |
   |------------|-------------------------------|---------------------------|
   | ext2/3/4   | `resize2fs`                   | mounted (online)          |
-  | btrfs      | `btrfs filesystem resize max` | mounted (online)          |
-  | xfs        | `xfs_growfs`                  | mounted (online)          |
   | f2fs       | `resize.f2fs`                 | unmounted, then remounted |
 
   The filesystem type, backing device and mount options are read from

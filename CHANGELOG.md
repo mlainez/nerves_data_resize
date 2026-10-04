@@ -2,10 +2,10 @@
 
 ## 0.2.0-dev
 
-- Support ext2/3/4 (`resize2fs`), btrfs, xfs and f2fs through the
+- Support ext2/3/4 (`resize2fs`) and f2fs through the
   `NervesDataResize.Filesystem` behaviour; the type is detected from
   `/proc/mounts` and can be overridden with `:filesystem`.
-- Grow ext4, btrfs and xfs online; only f2fs is unmounted and remounted.
+- Grow ext4 online; f2fs is unmounted and remounted.
 - `:partition` is optional: the device mounted at `:mount_point` is used.
 - Remount with the options found in `/proc/mounts`; `:mount_opts` overrides
   them and `"nodev"` is only the fallback when `/proc/mounts` is unreadable.

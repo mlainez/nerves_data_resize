@@ -29,7 +29,7 @@ defmodule NervesDataResizeTest do
   end
 
   defp touched?,
-    do: Fake.calls() |> Enum.any?(&String.starts_with?(&1, ~w(umount resize mount btrfs xfs_)))
+    do: Fake.calls() |> Enum.any?(&String.starts_with?(&1, ~w(umount resize mount)))
 
   describe "configuration" do
     test "returns :disabled without configuration" do
@@ -97,29 +97,6 @@ defmodule NervesDataResizeTest do
         Fake.stop()
         assert {:ok, _} = run(type: type)
         assert "resize2fs /dev/mmcblk0p3" in Fake.calls()
-      end
-    end
-  end
-
-  describe "btrfs and xfs (online)" do
-    test "btrfs grows by mount point" do
-      assert {:ok, _} = run(type: "btrfs")
-      assert "btrfs filesystem resize max /data" in Fake.calls()
-      assert Fake.calls("umount") == []
-    end
-
-    test "xfs grows by mount point" do
-      assert {:ok, _} = run(type: "xfs")
-      assert "xfs_growfs /data" in Fake.calls()
-      assert Fake.calls("umount") == []
-    end
-
-    test "btrfs and xfs report resize failures" do
-      for {type, key} <- [{"btrfs", "btrfs"}, {"xfs", "xfs_growfs"}] do
-        Fake.stop()
-
-        assert {:error, %{step: :resize, remounted?: false}} =
-                 run(type: type, fail: %{key => {"boom", 1}})
       end
     end
   end
@@ -265,8 +242,6 @@ defmodule NervesDataResizeTest do
     test "names every missing tool and touches nothing" do
       for {type, missing} <- [
             {"ext4", ["resize2fs"]},
-            {"btrfs", ["btrfs"]},
-            {"xfs", ["xfs_growfs"]},
             {"f2fs", ["resize.f2fs", "umount", "mount"]},
             {"ext4", ["df"]}
           ] do
@@ -347,7 +322,7 @@ defmodule NervesDataResizeTest do
     end
 
     test "a second run is :already_grown for every filesystem" do
-      for type <- ~w(ext4 f2fs btrfs xfs) do
+      for type <- ~w(ext4 f2fs) do
         Fake.stop()
         Fake.start(type: type)
         opts = [runner: Fake, mount_point: "/data"]
@@ -385,8 +360,8 @@ defmodule NervesDataResizeTest do
     end
 
     test "a strategy module can be given as the override" do
-      assert {:ok, _} = run([type: "vfat"], filesystem: NervesDataResize.Filesystem.Xfs)
-      assert "xfs_growfs /data" in Fake.calls()
+      assert {:ok, _} = run([type: "vfat"], filesystem: NervesDataResize.Filesystem.Ext4)
+      assert "resize2fs /dev/mmcblk0p3" in Fake.calls()
     end
   end
 

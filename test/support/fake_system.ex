@@ -23,7 +23,7 @@ defmodule NervesDataResize.FakeSystem do
 
   @behaviour NervesDataResize.System
 
-  @tools ~w(df mount umount blockdev resize2fs resize.f2fs btrfs xfs_growfs fwup dmsetup)
+  @tools ~w(df mount umount blockdev resize2fs resize.f2fs fwup dmsetup)
 
   def start(opts \\ []) do
     state =
@@ -226,8 +226,6 @@ defmodule NervesDataResize.FakeSystem do
 
   defp simulate("resize.f2fs", [_dev], s), do: grown(s)
   defp simulate("resize2fs", [_dev], s), do: grown(s)
-  defp simulate("btrfs", ["filesystem", "resize", "max", _mp], s), do: grown(s)
-  defp simulate("xfs_growfs", [_mp], s), do: grown(s)
 
   defp simulate("blockdev", ["--getsize64", _dev], s), do: {{"#{s.part_bytes}\n", 0}, s}
 

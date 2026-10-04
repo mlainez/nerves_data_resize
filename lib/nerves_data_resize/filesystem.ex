@@ -8,7 +8,7 @@ defmodule NervesDataResize.Filesystem do
   also understood by busybox); a strategy may override `size_cmd/1` and
   `parse_size/1`.
 
-  Built in: `NervesDataResize.Filesystem.Ext4`, `.F2fs`, `.Btrfs`, `.Xfs`.
+  Built in: `NervesDataResize.Filesystem.Ext4`, and `.F2fs`, the filesystems Nerves systems use for application data.
   """
 
   @type command :: {program :: String.t(), args :: [String.t()]}
@@ -33,9 +33,7 @@ defmodule NervesDataResize.Filesystem do
 
   @strategies [
     NervesDataResize.Filesystem.Ext4,
-    NervesDataResize.Filesystem.F2fs,
-    NervesDataResize.Filesystem.Btrfs,
-    NervesDataResize.Filesystem.Xfs
+    NervesDataResize.Filesystem.F2fs
   ]
 
   defmacro __using__(_opts) do
