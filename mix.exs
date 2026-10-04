@@ -1,30 +1,35 @@
 defmodule NervesDataResize.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0-dev"
 
   def project do
     [
       app: :nerves_data_resize,
       version: @version,
       elixir: "~> 1.17",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: [],
       name: "NervesDataResize",
       description:
-        "First-boot F2FS data-partition grow for Nerves devices (idempotent + safe)",
+        "Grows a mounted ext4, f2fs, btrfs or xfs filesystem to fill its partition. " <>
+          "Idempotent, with the standard resize tools and no extra dependencies.",
       package: package(),
-      docs: [main: "readme", extras: ["README.md"]]
+      docs: [main: "readme", extras: ["README.md", "CHANGELOG.md"]]
     ]
   end
 
   def application, do: [extra_applications: [:logger]]
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp package do
     [
       name: :nerves_data_resize,
       licenses: ["Apache-2.0"],
-      files: ~w(lib mix.exs README.md LICENSE),
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE),
       links: %{"GitHub" => "https://github.com/mlainez/nerves_data_resize"}
     ]
   end

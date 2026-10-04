@@ -1,74 +1,137 @@
 # nerves_data_resize
 
-> ### ⚠️ Very early work — built for a workshop, not for production
->
-> This package was written for the **Goatmire Elixir workshop** on running
-> Nerves on Fairphone 3 hardware. It exists for tinkering and teaching.
->
-> There are no stability guarantees and APIs will change without notice.
->
-> See [`nerves_ai`](https://github.com/mlainez/nerves_ai) for the full
-> stack and the workshop context.
+Grows a mounted filesystem to fill the block device behind it. Works for
+ext4, f2fs, btrfs and xfs, has no dependencies, and shells out to the
+standard resize tools instead of reimplementing anything.
 
-First-boot F2FS data-partition grow for devices flashed via
-[fwup](https://github.com/fwup-home/fwup) (Nerves, Buildroot-fwup,
-etc.).
+## When you need it
 
-## The problem
+- An image ships a small pre-built filesystem inside a much larger partition.
+  The partition is big, `df` reports the small size.
+- A partition was grown (by fwup `expand = true`, `parted`, `kpartx`, ...) but
+  the filesystem inside it was not.
 
-Some firmware images ship a small, pre-built F2FS filesystem inside a
-much larger data partition. The Fairphone 3 system, for example, writes
-a 256 MB filesystem into a 51 GB partition. When fwup installs it on the
-device, it grows the partition entry (`expand = true`), but the
-filesystem inside stays at its original size. When the image is flashed
-raw (with `fastboot`, `dd`, ...), even the partition keeps its build-time
-size.
-
-At boot this library compares the filesystem size with the partition
-size. If the filesystem is materially smaller, it unmounts it,
-optionally grows the partition first (`:grow_partition`, below), runs
-`resize.f2fs`, and remounts it. Once the filesystem fills the partition,
-later boots return `:already_grown` immediately.
-
-Nothing may hold the partition open when this runs. With IEx shell
-history enabled (`-kernel shell_history enabled`), the Erlang kernel
-keeps the history file open on the data partition, and the unmount
-fails.
-
-Official Nerves systems format the whole application partition on first
-boot, so they don't need this.
+Nerves systems that format the application partition at first boot do not
+need it.
 
 ## Usage
 
-Configure once:
-
-```elixir
-# config/target.exs
-config :nerves_data_resize, :config,
-  partition: "/dev/mmcblk0p62p3",
-  mount_point: "/root",
-  mount_opts: "nodev",
-  threshold: 1.1   # skip if partition ≤ FS × 1.1
-```
-
-Then call once at app start, before anything writes to the partition
-(`nerves_ai` does this for you):
+Call it once at application start, before anything writes to the target:
 
 ```elixir
 defmodule MyApp.Application do
   use Application
 
   def start(_type, _args) do
-    _ = NervesDataResize.run()
+    _ = NervesDataResize.run(mount_point: "/data")
     Supervisor.start_link(children(), strategy: :one_for_one)
   end
 end
 ```
 
-For a device-mapper partition flashed raw, add `:grow_partition`. An
-fwup task in the firmware rewrites the partition table (an `mbr_write`
-of an `expand = true` partition), then the mapping is reloaded with
-`dmsetup`:
+or configure it and call `NervesDataResize.run()`:
+
+```elixir
+config :nerves_data_resize, :config,
+  mount_point: "/data",
+  threshold: 1.1
+```
+
+The filesystem type, backing device and mount options are read from
+`/proc/mounts`. `mount_point` defaults to `"/root"`; any distinct mount other
+than `/` works. With no configuration at all, `run/1` returns `:disabled`.
+
+| Option            | Meaning                                                            |
+|-------------------|--------------------------------------------------------------------|
+| `:mount_point`    | Mount to grow (default `"/root"`).                                 |
+| `:partition`      | Device to grow into (default: the device mounted at `:mount_point`). |
+| `:filesystem`     | Type override: `:ext4`, `"f2fs"`, or a `NervesDataResize.Filesystem` module. |
+| `:mount_opts`     | Options for remounting an offline filesystem (default: those in use). |
+| `:threshold`      | Grow when `device / filesystem >= threshold` (default `1.1`).      |
+| `:grow_partition` | Device-mapper partition growth, see below.                         |
+| `:runner`         | A `NervesDataResize.System` implementation, for tests.             |
+| `:enabled`        | `false` disables the library.                                      |
+
+Return values: `:disabled`, `:already_grown`, `{:ok, %{before: bytes, after:
+bytes}}`, or `{:error, reason}`. Errors are logged and never raised. See
+`NervesDataResize` for every error shape.
+
+## Supported filesystems
+
+| Filesystem | Tool needed                   | While growing             |
+|------------|-------------------------------|---------------------------|
+| ext2/3/4   | `resize2fs`                   | mounted (online)          |
+| btrfs      | `btrfs filesystem resize max` | mounted (online)          |
+| xfs        | `xfs_growfs`                  | mounted (online)          |
+| f2fs       | `resize.f2fs`                 | unmounted, then remounted |
+
+`df`, plus `mount` and `umount` for f2fs, must also be on the `PATH`. A missing
+tool returns `{:error, {:missing_tools, names}}` before anything is touched.
+Other filesystems return `{:error, {:unsupported_filesystem, type}}`.
+A custom filesystem can be supported by implementing the
+`NervesDataResize.Filesystem` behaviour and passing the module as `:filesystem`.
+
+## Safety
+
+- `/` and anything that is not a mount in `/proc/mounts` are refused.
+- Online filesystems are never unmounted.
+- Before unmounting, `/proc/*/fd`, `cwd`, `exe` and `root` are scanned. If a
+  process holds anything under the mount point, nothing is unmounted and
+  `{:error, {:busy, [%{pid:, name:, path:}]}}` names the offenders. IEx shell
+  history (`-kernel shell_history enabled`) is a typical culprit: the Erlang
+  kernel keeps the history file open.
+- If a step fails after an unmount, the filesystem is mounted again before
+  `run/1` returns: `{:error, %{step:, reason:, remounted?:}}`.
+- A filesystem that already fills its device is left alone, so repeated boots
+  are no-ops.
+
+## Growing a device-mapper partition (advanced)
+
+An image flashed raw keeps the partition size it was built with. For a
+device-mapper partition (as created by `kpartx`), `:grow_partition` first
+extends the partition to the end of its disk: an fwup task rewrites the
+partition table, then the mapping is reloaded with `dmsetup`:
+
+```elixir
+config :nerves_data_resize, :config,
+  partition: "/dev/mapper/disk-part3",
+  mount_point: "/data",
+  grow_partition: [
+    disk: "/dev/mmcblk0",
+    ops_fw: "/usr/share/fwup/ops.fw",
+    task: "grow-data"
+  ]
+```
+
+This needs `fwup` and `dmsetup`, a single-linear-target mapping, and an fwup
+task (typically an `mbr_write` of an `expand = true` partition).
+
+## Testing
+
+All system access (`/proc`, `/sys`, commands, executable lookup) goes through
+the `NervesDataResize.System` behaviour. `test/support/fake_system.ex` is a
+fake that simulates one device and filesystem, records commands and injects
+failures; the suite uses it for every strategy and failure path:
+
+```
+mix test
+```
+
+The loopback suite grows real ext4, f2fs, btrfs and xfs filesystems on loop
+devices. It needs root, loop devices and the filesystem tools, so it is
+excluded by default. Run it in a throwaway privileged container, for example:
+
+```
+docker run --rm --privileged -v "$PWD":/src:ro elixir:1.18-otp-27 bash -c '
+  apt-get update -qq && apt-get install -y -qq e2fsprogs f2fs-tools btrfs-progs xfsprogs util-linux
+  for i in $(seq 0 31); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
+  cp -r /src /work && cd /work && MIX_ENV=test mix test --only loopback'
+```
+
+## Example: Fairphone 3
+
+The Fairphone 3 firmware ships a 256 MB F2FS inside a 51 GB partition that is
+a device-mapper partition of the raw-flashed userdata disk:
 
 ```elixir
 config :nerves_data_resize, :config,
@@ -80,34 +143,6 @@ config :nerves_data_resize, :config,
     task: "grow-app"
   ]
 ```
-
-Or skip the config entirely and pass keys directly:
-
-```elixir
-NervesDataResize.run(partition: "/dev/mmcblk0p1", mount_point: "/data")
-```
-
-## What it returns
-
-- `:already_grown` — FS already fills the partition
-- `:disabled` — no partition specified
-- `{:ok, %{before: bytes, after: bytes}}` — actually grew the FS
-- `{:error, reason}` — failed (logged but not raised — the BEAM
-  keeps running)
-
-## Requirements
-
-The firmware image must provide `df`, `mount`, `umount` and `resize.f2fs`
-(from f2fs-tools) on the `PATH`, plus `fwup` and `dmsetup` when
-`:grow_partition` is set. If any of them is missing, `run/1`
-returns `{:error, {:missing_tools, names}}` before touching the
-partition. The partition size is read from `/sys/class/block/<dev>/size`,
-falling back to `blockdev --getsize64` for device-mapper partitions.
-
-## Toolchain
-
-Built and tested with Erlang/OTP 29.1.1 and Elixir 1.20.4, matching the
-official Nerves systems (see `.tool-versions`).
 
 ## License
 
