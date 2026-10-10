@@ -10,6 +10,8 @@ defmodule NervesDataResize.Busy do
     case sys.ls("/proc") do
       {:ok, entries} ->
         entries
+        # /proc holds non-PID entries too ("self", "cpuinfo", ...); keep only
+        # names that are entirely digits.
         |> Enum.filter(&match?({_, ""}, Integer.parse(&1)))
         |> Enum.map(&String.to_integer/1)
         |> Enum.sort()
@@ -29,10 +31,17 @@ defmodule NervesDataResize.Busy do
         {:error, _} -> []
       end
 
+    # Besides each open file descriptor in fd/, a process can also hold the
+    # mount point as its current directory, its running executable, or (in a
+    # chroot) its root -- each is a symlink the kernel exposes the same way.
+    links = fds ++ Enum.map(~w(cwd exe root), &(base <> "/" <> &1))
+
     paths =
-      (fds ++ Enum.map(~w(cwd exe root), &(base <> "/" <> &1)))
+      links
       |> Enum.flat_map(fn link ->
         case sys.read_link(link) do
+          # The kernel appends " (deleted)" to the target of a symlink whose
+          # file was unlinked while still open; strip it to compare paths.
           {:ok, target} -> [String.replace_suffix(target, " (deleted)", "")]
           {:error, _} -> []
         end

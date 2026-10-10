@@ -499,29 +499,31 @@ defmodule NervesDataResizeTest do
   end
 
   describe "dm table helpers" do
-    test "parse_dm_table/1 reads a single linear target" do
-      assert NervesDataResize.parse_dm_table("0 524288 linear 259:30 1435664\n") ==
+    alias NervesDataResize.DeviceMapper
+
+    test "parse_table/1 reads a single linear target" do
+      assert DeviceMapper.parse_table("0 524288 linear 259:30 1435664\n") ==
                {:ok, %{sectors: 524_288, device: "259:30", start: 1_435_664}}
 
       assert {:error, {:unsupported_dm_table, _}} =
-               NervesDataResize.parse_dm_table("0 100 striped 2 64 8:0 0 8:16 0")
+               DeviceMapper.parse_table("0 100 striped 2 64 8:0 0 8:16 0")
     end
 
     test "grow_plan/3 grows a partition that ends before its disk" do
       table = %{sectors: 524_288, device: "259:30", start: 1_435_664}
 
-      assert NervesDataResize.grow_plan("p3", table, 102_217_679) ==
+      assert DeviceMapper.grow_plan("p3", table, 102_217_679) ==
                %{name: "p3", device: "259:30", start: 1_435_664, new_sectors: 100_782_015}
     end
 
     test "grow_plan/3 leaves a partition that already reaches its disk" do
       table = %{sectors: 100_782_015, device: "259:30", start: 1_435_664}
-      assert NervesDataResize.grow_plan("p3", table, 102_217_679) == nil
+      assert DeviceMapper.grow_plan("p3", table, 102_217_679) == nil
     end
 
     test "grow_plan/3 ignores growth under 1 MiB" do
       table = %{sectors: 100_000, device: "259:30", start: 0}
-      assert NervesDataResize.grow_plan("p3", table, 101_000) == nil
+      assert DeviceMapper.grow_plan("p3", table, 101_000) == nil
     end
   end
 end

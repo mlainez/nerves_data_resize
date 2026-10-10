@@ -22,11 +22,12 @@ defmodule NervesDataResize do
   Application config, or the same keys passed to `run/1` (which win):
 
       config :nerves_data_resize, :config,
-        mount_point: "/data",
+        mount_point: "/root",
         threshold: 1.1
 
     * `:mount_point` - mount to grow; any distinct mount except `/`
-      (default `"/root"`).
+      (default `"/root"`, the mount point `erlinit` actually creates —
+      `/data` is commonly just a symlink to it, not a mount point itself).
     * `:partition` - block device to grow into. Default: the device mounted
       at `:mount_point`.
     * `:filesystem` - type override (`:ext4`, `"f2fs"`, or a module
@@ -124,26 +125,26 @@ defmodule NervesDataResize do
   def run(opts \\ []) do
     config = opts ++ (Application.get_env(:nerves_data_resize, :config) || [])
 
-    if Keyword.get(config, :enabled, true) and Keyword.drop(config, [:runner, :enabled]) != [] do
+    if Keyword.get(config, :enabled, true) and configured?(config) do
       do_run(config)
     else
       :disabled
     end
   end
 
+  # True once at least one real option (anything but :runner/:enabled) is
+  # set, i.e. the library was actually asked to do something.
+  defp configured?(config), do: Keyword.drop(config, [:runner, :enabled]) != []
+
   # Filesystem metadata makes `df` report less than the device size even when
   # the filesystem fills it, so a small gap is never worth a resize.
   @min_grow 64 * 1024 * 1024
 
   defp worth_growing?(fs_bytes, device_bytes, threshold, min_grow) do
+    # fs_bytes is never 0 in practice (an empty filesystem still has
+    # metadata), but max/2 keeps the ratio defined if it ever were.
     device_bytes / max(fs_bytes, 1) >= threshold and device_bytes - fs_bytes >= min_grow
   end
-
-  @doc false
-  defdelegate parse_dm_table(out), to: DeviceMapper, as: :parse_table
-
-  @doc false
-  defdelegate grow_plan(name, table, disk_sectors), to: DeviceMapper
 
   defp do_run(config) do
     sys =
@@ -160,21 +161,22 @@ defmodule NervesDataResize do
          :ok <- tools_present(ctx),
          {:ok, fs_bytes} <- fs_bytes(ctx),
          {:ok, part_bytes} <- partition_bytes(ctx),
-         {:ok, dm_grow} <- plan_partition_grow(ctx),
-         target_bytes = if(dm_grow, do: dm_grow.new_sectors * 512, else: part_bytes),
-         true <- worth_growing?(fs_bytes, target_bytes, threshold, min_grow) || :already_grown do
-      Logger.info(
-        "[nerves_data_resize] growing #{ctx.type} on #{ctx.device}: " <>
-          "FS=#{mb(fs_bytes)} MB, device=#{mb(target_bytes)} MB"
-      )
+         {:ok, dm_grow} <- plan_partition_grow(ctx) do
+      target_bytes = if(dm_grow, do: dm_grow.new_sectors * 512, else: part_bytes)
 
-      ctx
-      |> grow_filesystem(dm_grow, fs_bytes)
-      |> log_result()
-    else
-      :already_grown ->
+      if worth_growing?(fs_bytes, target_bytes, threshold, min_grow) do
+        Logger.info(
+          "[nerves_data_resize] growing #{ctx.type} on #{ctx.device}: " <>
+            "FS=#{mb(fs_bytes)} MB, device=#{mb(target_bytes)} MB"
+        )
+
+        ctx
+        |> grow_filesystem(dm_grow, fs_bytes)
+        |> log_result()
+      else
         :already_grown
-
+      end
+    else
       {:error, _} = err ->
         Logger.warning("[nerves_data_resize] skipping: #{inspect(err)}")
         err
@@ -242,7 +244,9 @@ defmodule NervesDataResize do
         if(ctx.strategy.offline?(), do: ["mount", "umount"], else: []) ++
         if(ctx.grow, do: ["fwup", "dmsetup"], else: [])
 
-    case tools |> Enum.uniq() |> Enum.reject(&ctx.sys.find_executable/1) do
+    sys = ctx.sys
+
+    case tools |> Enum.uniq() |> Enum.reject(&sys.find_executable/1) do
       [] -> :ok
       missing -> {:error, {:missing_tools, missing}}
     end
@@ -370,6 +374,8 @@ defmodule NervesDataResize do
     end
   end
 
+  # Tags an {:error, reason} with the step that produced it, so callers can
+  # report {step, reason}; :ok and {:ok, _} pass through unchanged.
   defp step(_name, :ok), do: :ok
   defp step(_name, {:ok, value}), do: {:ok, value}
   defp step(name, {:error, reason}), do: {:error, name, reason}

@@ -57,6 +57,8 @@ defmodule NervesDataResize.Filesystem do
   @spec for_type(String.t() | atom()) ::
           {:ok, module()} | {:error, {:unsupported_filesystem, term()}}
   def for_type(type) when is_atom(type) and not is_nil(type) do
+    # An atom is either a custom strategy module (NervesDataResize.Filesystem.Ext4)
+    # or a filesystem-type shorthand (:ext4, :f2fs) -- try the module case first.
     if Code.ensure_loaded?(type) and function_exported?(type, :resize_cmds, 2) do
       {:ok, type}
     else

@@ -20,12 +20,16 @@ defmodule NervesDataResize.DeviceMapper do
     name = Path.basename(partition)
 
     with {:ok, disk_sectors} <- sysfs_sectors(sys, Keyword.fetch!(grow, :disk)),
-         {out, 0} <- sys.cmd("dmsetup", ["table", name], []),
+         {:ok, out} <- dmsetup_table(sys, name),
          {:ok, table} <- parse_table(out) do
       {:ok, grow_plan(name, table, disk_sectors)}
-    else
-      {out, code} when is_binary(out) -> {:error, {:dmsetup_table_failed, code, out}}
-      {:error, _} = err -> err
+    end
+  end
+
+  defp dmsetup_table(sys, name) do
+    case sys.cmd("dmsetup", ["table", name], []) do
+      {out, 0} -> {:ok, out}
+      {out, code} -> {:error, {:dmsetup_table_failed, code, out}}
     end
   end
 
@@ -42,12 +46,16 @@ defmodule NervesDataResize.DeviceMapper do
     end
   end
 
-  # Growing by less than 1 MiB is not worth the disturbance.
+  # Sectors are always 512 bytes for dmsetup/fwup purposes.
+  @sectors_per_mib div(1024 * 1024, 512)
+
   @spec grow_plan(String.t(), table(), non_neg_integer()) :: plan() | nil
   def grow_plan(name, %{sectors: sectors, device: device, start: start}, disk_sectors) do
     new_sectors = disk_sectors - start
+    growth = new_sectors - sectors
 
-    if new_sectors - sectors >= 2048 do
+    # Growing by less than 1 MiB is not worth the disturbance.
+    if growth >= @sectors_per_mib do
       %{name: name, device: device, start: start, new_sectors: new_sectors}
     end
   end
@@ -68,6 +76,9 @@ defmodule NervesDataResize.DeviceMapper do
       Keyword.fetch!(grow, :ops_fw)
     ]
 
+    # fwup rewrites the partition table on disk; dmsetup then has to be told
+    # about the new length in its own three-step dance: a mapping can only be
+    # reloaded while suspended, and must be resumed afterwards to take effect.
     with :ok <- run(sys, :fwup_failed, "fwup", fwup_args),
          :ok <- run(sys, :dmsetup_failed, "dmsetup", ["suspend", plan.name]),
          :ok <- run(sys, :dmsetup_failed, "dmsetup", ["reload", plan.name, "--table", table]),
