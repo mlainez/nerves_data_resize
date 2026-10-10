@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0-dev
+## 0.2.0 - 2026-10-06
 
 - Support ext2/3/4 (`resize2fs`) and f2fs through the
   `NervesDataResize.Filesystem` behaviour; the type is detected from

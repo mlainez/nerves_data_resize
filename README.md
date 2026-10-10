@@ -1,18 +1,19 @@
 # nerves_data_resize
 
-Grows a mounted filesystem to fill the block device behind it. Works for
-ext4 and f2fs, has no dependencies, and shells out to the
-standard resize tools instead of reimplementing anything.
+Grows a mounted filesystem to fill the block device behind it on a Nerves device. YOU LIKELY DON'T NEED THIS.
+Works for ext4 and f2fs. On a regular Nerves device, this is done by fwup when using `expand = true` 
+but on a device where a disk image is flashed with fastboot in an existing partition, this must be done on the
+first device boot. That's what this lib is about.
 
-## When you need it
+## Install
 
-- An image ships a small pre-built filesystem inside a much larger partition.
-  The partition is big, `df` reports the small size.
-- A partition was grown (by fwup `expand = true`, `parted`, `kpartx`, ...) but
-  the filesystem inside it was not.
-
-Nerves systems that format the application partition at first boot do not
-need it.
+```elixir
+def deps do
+  [
+    {:nerves_data_resize, github: "mlainez/nerves_data_resize"}
+  ]
+end
+```
 
 ## Usage
 
@@ -23,7 +24,7 @@ defmodule MyApp.Application do
   use Application
 
   def start(_type, _args) do
-    _ = NervesDataResize.run(mount_point: "/data")
+    _ = NervesDataResize.run(mount_point: "/root")
     Supervisor.start_link(children(), strategy: :one_for_one)
   end
 end
@@ -33,13 +34,17 @@ or configure it and call `NervesDataResize.run()`:
 
 ```elixir
 config :nerves_data_resize, :config,
-  mount_point: "/data",
+  mount_point: "/root",
   threshold: 1.1
 ```
 
-The filesystem type, backing device and mount options are read from
-`/proc/mounts`. `mount_point` defaults to `"/root"`; any distinct mount other
-than `/` works. With no configuration at all, `run/1` returns `:disabled`.
+The filesystem type, device and mount options are read from
+`/proc/mounts`. `mount_point` defaults to `"/root"`, he mount point `erlinit`
+actually creates; `/data` is commonly just a symlink to it, not a
+mount point itself, so passing `"/data"` here will not match `/proc/mounts`
+unless your system genuinely mounts a partition there directly. Any distinct
+mount other than `/` works. With no configuration at all, `run/1` returns
+`:disabled`.
 
 | Option            | Meaning                                                            |
 |-------------------|--------------------------------------------------------------------|
@@ -76,13 +81,11 @@ A custom filesystem can be supported by implementing the
 - Online filesystems are never unmounted.
 - Before unmounting, `/proc/*/fd`, `cwd`, `exe` and `root` are scanned. If a
   process holds anything under the mount point, nothing is unmounted and
-  `{:error, {:busy, [%{pid:, name:, path:}]}}` names the offenders. IEx shell
-  history (`-kernel shell_history enabled`) is a typical culprit: the Erlang
-  kernel keeps the history file open.
+  `{:error, {:busy, [%{pid:, name:, path:}]}}` names the offenders.
 - If a step fails after an unmount, the filesystem is mounted again before
   `run/1` returns: `{:error, %{step:, reason:, remounted?:}}`.
 - A filesystem that already fills its device is left alone, so repeated boots
-  are no-ops.
+  don't trigger anything.
 
 ## Growing a device-mapper partition (advanced)
 
@@ -94,7 +97,7 @@ partition table, then the mapping is reloaded with `dmsetup`:
 ```elixir
 config :nerves_data_resize, :config,
   partition: "/dev/mapper/disk-part3",
-  mount_point: "/data",
+  mount_point: "/root",
   grow_partition: [
     disk: "/dev/mmcblk0",
     ops_fw: "/usr/share/fwup/ops.fw",
